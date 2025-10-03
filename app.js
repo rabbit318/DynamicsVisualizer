@@ -31,7 +31,7 @@ let animationId;
 // Visualization data
 const volumeHistory = [];
 const maxHistoryPoints = 500;
-let numLevels = 5;
+let numLevels = 8;
 let volumeMin = Infinity;
 let volumeMax = -Infinity;
 let isAnalyzed = false;
@@ -40,8 +40,8 @@ let preAnalyzedData = []; // Store all dynamics data from pre-analysis
 
 // Cute color palette
 const cuteColors = [
-    '#FFB6C1', '#FFD4A3', '#FFFACD', '#B4E7CE', '#A7D8FF',
-    '#DDA0DD', '#FFB3E6', '#C7CEEA', '#FFDAB9', '#E0BBE4'
+    '#FF9999', '#FFBB66', '#FFE066', '#B4F0B4', '#A7D8FF',
+    '#B8A4E0', '#FFB3D9', '#FF8AC8', '#66E0E0', '#A499F0'
 ];
 
 // Initialize canvas size
@@ -229,6 +229,18 @@ function updateLegend() {
         levelItem.style.backgroundColor = getColorForLevel(i);
         levelItem.textContent = `Level ${i}`;
         levelsLegend.appendChild(levelItem);
+    }
+
+    // Recalculate levels for all pre-analyzed data
+    if (isAnalyzed && preAnalyzedData.length > 0) {
+        console.log(`Recalculating ${preAnalyzedData.length} data points for ${numLevels} levels`);
+        for (let i = 0; i < preAnalyzedData.length; i++) {
+            preAnalyzedData[i].level = volumeToLevel(preAnalyzedData[i].volume);
+            if (preAnalyzedData[i].avgVolume !== undefined) {
+                preAnalyzedData[i].avgLevel = volumeToLevel(preAnalyzedData[i].avgVolume);
+            }
+        }
+        console.log(`Sample recalculated levels: ${preAnalyzedData.slice(0, 5).map(d => d.level).join(', ')}`);
     }
 }
 
