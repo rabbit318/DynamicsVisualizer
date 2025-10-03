@@ -372,8 +372,8 @@ function drawSection(data, startX, endX, startTime, endTime, isFuture, levelHeig
         const level = data[i].level;
         const color = getColorForLevel(level);
         const position = Math.max(0, Math.min(1, i / data.length));
-        // Make future grayed out
-        const finalColor = isFuture ? adjustColorBrightness(color, 0.5) : color;
+        // Desaturate past colors more (25%), boost future saturation
+        const finalColor = isFuture ? adjustColorSaturation(color, 1.3) : adjustColorSaturation(color, 0.25);
         gradient.addColorStop(position, finalColor);
     }
     ctx.strokeStyle = gradient;
@@ -390,8 +390,8 @@ function drawSection(data, startX, endX, startTime, endTime, isFuture, levelHeig
         const level = data[i].level;
         const color = getColorForLevel(level);
         const position = Math.max(0, Math.min(1, i / data.length));
-        const finalColor = isFuture ? adjustColorBrightness(color, 0.5) : color;
-        fillGradient.addColorStop(position, finalColor + (isFuture ? '20' : '40'));
+        const finalColor = isFuture ? adjustColorSaturation(color, 1.3) : adjustColorSaturation(color, 0.25);
+        fillGradient.addColorStop(position, finalColor + (isFuture ? '60' : '50'));
     }
     ctx.fillStyle = fillGradient;
     ctx.fill();
@@ -461,19 +461,65 @@ function drawMovingAverageGlow(data, startX, endX, startTime, endTime, isFuture,
     ctx.restore();
 }
 
-// Helper to adjust color brightness for future preview
-function adjustColorBrightness(hex, factor) {
+// Helper to adjust color saturation for future preview
+function adjustColorSaturation(hex, saturationFactor) {
     // Convert hex to RGB
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
 
-    // Mix with white (lighten)
-    const nr = Math.round(r + (255 - r) * factor);
-    const ng = Math.round(g + (255 - g) * factor);
-    const nb = Math.round(b + (255 - b) * factor);
+    // Convert RGB to HSL
+    const rNorm = r / 255;
+    const gNorm = g / 255;
+    const bNorm = b / 255;
 
-    return `#${nr.toString(16).padStart(2, '0')}${ng.toString(16).padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`;
+    const max = Math.max(rNorm, gNorm, bNorm);
+    const min = Math.min(rNorm, gNorm, bNorm);
+    const l = (max + min) / 2;
+    let h, s;
+
+    if (max === min) {
+        h = s = 0; // achromatic
+    } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
+        switch (max) {
+            case rNorm: h = ((gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0)) / 6; break;
+            case gNorm: h = ((bNorm - rNorm) / d + 2) / 6; break;
+            case bNorm: h = ((rNorm - gNorm) / d + 4) / 6; break;
+        }
+    }
+
+    // Adjust saturation (clamp to max 1.0)
+    s = Math.min(1.0, s * saturationFactor);
+
+    // Convert HSL back to RGB
+    const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+    };
+
+    let nr, ng, nb;
+    if (s === 0) {
+        nr = ng = nb = l;
+    } else {
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        nr = hue2rgb(p, q, h + 1/3);
+        ng = hue2rgb(p, q, h);
+        nb = hue2rgb(p, q, h - 1/3);
+    }
+
+    const rFinal = Math.round(nr * 255);
+    const gFinal = Math.round(ng * 255);
+    const bFinal = Math.round(nb * 255);
+
+    return `#${rFinal.toString(16).padStart(2, '0')}${gFinal.toString(16).padStart(2, '0')}${bFinal.toString(16).padStart(2, '0')}`;
 }
 
 // Legacy visualization for non-analyzed mode
