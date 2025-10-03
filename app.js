@@ -130,6 +130,20 @@ async function preAnalyzeAudio(file) {
             level: volumeToLevel(d.volume)
         }));
 
+        // Calculate moving average (1 second window ~62 samples)
+        const movingAvgWindow = 62;
+        for (let i = 0; i < preAnalyzedData.length; i++) {
+            const startIdx = Math.max(0, i - Math.floor(movingAvgWindow / 2));
+            const endIdx = Math.min(preAnalyzedData.length, i + Math.floor(movingAvgWindow / 2) + 1);
+            let sum = 0;
+            for (let j = startIdx; j < endIdx; j++) {
+                sum += preAnalyzedData[j].volume;
+            }
+            const avgVolume = sum / (endIdx - startIdx);
+            preAnalyzedData[i].avgVolume = avgVolume;
+            preAnalyzedData[i].avgLevel = volumeToLevel(avgVolume);
+        }
+
         isAnalyzed = true;
 
         analysisStatus.textContent = 'Analysis complete! Ready to play.';
@@ -297,7 +311,15 @@ function drawVisualization() {
         d.time > currentTime && d.time <= currentTime + futureWindow
     );
 
-    // Draw past (left half - colored)
+    // Draw moving average with glow effect first (underneath)
+    if (pastData.length > 0) {
+        drawMovingAverageGlow(pastData, 0, midX, currentTime - pastWindow, currentTime, false, levelHeight);
+    }
+    if (futureData.length > 0) {
+        drawMovingAverageGlow(futureData, midX, canvas.width, currentTime, currentTime + futureWindow, true, levelHeight);
+    }
+
+    // Draw main dynamics lines on top (sharp)
     if (pastData.length > 0) {
         drawSection(pastData, 0, midX, currentTime - pastWindow, currentTime, false, levelHeight);
     }
@@ -373,6 +395,70 @@ function drawSection(data, startX, endX, startTime, endTime, isFuture, levelHeig
     }
     ctx.fillStyle = fillGradient;
     ctx.fill();
+}
+
+// Draw moving average with illuminating glow effect
+function drawMovingAverageGlow(data, startX, endX, startTime, endTime, isFuture, levelHeight) {
+    if (data.length < 2) return;
+
+    const sectionWidth = endX - startX;
+    const timeRange = endTime - startTime;
+
+    // Convert data to points using raw averaged volume (not stepped levels)
+    const points = data.map(d => {
+        const normalizedTime = (d.time - startTime) / timeRange;
+        const x = startX + (normalizedTime * sectionWidth);
+
+        // Map avgVolume directly to Y position without level stepping
+        const range = volumeMax - volumeMin;
+        const normalized = range > 0 ? (d.avgVolume - volumeMin) / range : 0;
+        const y = canvas.height - (normalized * canvas.height);
+
+        return { x, y };
+    });
+
+    // Save current context state
+    ctx.save();
+
+    // Draw multiple glow layers with increasing blur radius (illumination effect)
+    const glowRadius = 25; // Total glow spread
+    const glowSteps = 8; // Number of layers for smooth illumination
+    const baseColor = isFuture ? [200, 200, 200] : [120, 140, 255]; // RGB values
+
+    for (let i = glowSteps; i > 0; i--) {
+        const radius = (i / glowSteps) * glowRadius;
+        const alpha = (i / glowSteps) * 0.15; // Fades out toward edges
+
+        ctx.shadowBlur = radius;
+        ctx.shadowColor = `rgba(${baseColor[0]}, ${baseColor[1]}, ${baseColor[2]}, ${alpha})`;
+
+        ctx.beginPath();
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+
+        ctx.moveTo(points[0].x, points[0].y);
+
+        // Draw smooth curve using quadratic curves
+        for (let j = 1; j < points.length - 1; j++) {
+            const xc = (points[j].x + points[j + 1].x) / 2;
+            const yc = (points[j].y + points[j + 1].y) / 2;
+            ctx.quadraticCurveTo(points[j].x, points[j].y, xc, yc);
+        }
+
+        // Draw last segment
+        if (points.length > 1) {
+            const last = points.length - 1;
+            ctx.quadraticCurveTo(points[last].x, points[last].y, points[last].x, points[last].y);
+        }
+
+        // Core line color
+        ctx.strokeStyle = `rgba(${baseColor[0]}, ${baseColor[1]}, ${baseColor[2]}, ${0.3 + (i / glowSteps) * 0.2})`;
+        ctx.stroke();
+    }
+
+    // Restore context state
+    ctx.restore();
 }
 
 // Helper to adjust color brightness for future preview
