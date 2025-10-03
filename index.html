@@ -18,22 +18,32 @@
                 <span id="analysis-status" class="analysis-status"></span>
             </div>
 
-            <div class="settings">
-                <div class="setting-group">
-                    <label for="levels-input">Number of Dynamics Levels:</label>
+            <div class="settings-inline">
+                <div class="setting-item">
+                    <label>Speed:</label>
+                    <div class="speed-buttons">
+                        <button id="speed-down" class="speed-btn">−</button>
+                        <span id="speed-display">1.0x</span>
+                        <button id="speed-up" class="speed-btn">+</button>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label for="levels-input">Dynamics Levels:</label>
                     <input type="number" id="levels-input" min="2" max="10" value="5">
                 </div>
 
-                <div class="setting-group">
-                    <label for="speed-control">Playback Speed:</label>
-                    <input type="range" id="speed-control" min="0.25" max="2" step="0.25" value="1">
-                    <span id="speed-value">1.0x</span>
+                <div class="setting-item">
+                    <span class="toggle-text">Moving Average</span>
+                    <label class="switch">
+                        <input type="checkbox" id="show-average" checked>
+                        <span class="slider"></span>
+                    </label>
                 </div>
             </div>
 
             <div class="playback-controls">
-                <button id="play-btn" disabled>▶ Play</button>
-                <button id="pause-btn" disabled>⏸ Pause</button>
+                <button id="play-pause-btn" disabled>▶ Play</button>
                 <button id="stop-btn" disabled>⏹ Stop</button>
             </div>
 

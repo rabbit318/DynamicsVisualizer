@@ -3,17 +3,18 @@ const audioElement = document.getElementById('audio-element');
 const audioFileInput = document.getElementById('audio-file');
 const fileNameDisplay = document.getElementById('file-name');
 const analysisStatus = document.getElementById('analysis-status');
-const playBtn = document.getElementById('play-btn');
-const pauseBtn = document.getElementById('pause-btn');
+const playPauseBtn = document.getElementById('play-pause-btn');
 const stopBtn = document.getElementById('stop-btn');
-const speedControl = document.getElementById('speed-control');
-const speedValue = document.getElementById('speed-value');
+const speedDownBtn = document.getElementById('speed-down');
+const speedUpBtn = document.getElementById('speed-up');
+const speedDisplay = document.getElementById('speed-display');
 const levelsInput = document.getElementById('levels-input');
 const currentLevelDisplay = document.getElementById('current-level');
 const levelsLegend = document.getElementById('levels-legend');
 const progressFill = document.getElementById('progress-fill');
 const progressBar = document.getElementById('progress-bar');
 const timeDisplay = document.getElementById('time-display');
+const showAverageCheckbox = document.getElementById('show-average');
 
 // Canvas
 const canvas = document.getElementById('visualization-canvas');
@@ -54,8 +55,7 @@ window.addEventListener('resize', resizeCanvas);
 // Pre-analyze audio file
 async function preAnalyzeAudio(file) {
     analysisStatus.textContent = 'Analyzing audio...';
-    playBtn.disabled = true;
-    pauseBtn.disabled = true;
+    playPauseBtn.disabled = true;
     stopBtn.disabled = true;
     isAnalyzed = false;
     preAnalyzedData = [];
@@ -147,8 +147,7 @@ async function preAnalyzeAudio(file) {
         isAnalyzed = true;
 
         analysisStatus.textContent = 'Analysis complete! Ready to play.';
-        playBtn.disabled = false;
-        pauseBtn.disabled = false;
+        playPauseBtn.disabled = false;
         stopBtn.disabled = false;
 
     } catch (error) {
@@ -158,8 +157,7 @@ async function preAnalyzeAudio(file) {
         volumeMax = -Infinity;
         isAnalyzed = false;
         preAnalyzedData = [];
-        playBtn.disabled = false;
-        pauseBtn.disabled = false;
+        playPauseBtn.disabled = false;
         stopBtn.disabled = false;
     }
 }
@@ -311,12 +309,14 @@ function drawVisualization() {
         d.time > currentTime && d.time <= currentTime + futureWindow
     );
 
-    // Draw moving average with glow effect first (underneath)
-    if (pastData.length > 0) {
-        drawMovingAverageGlow(pastData, 0, midX, currentTime - pastWindow, currentTime, false, levelHeight);
-    }
-    if (futureData.length > 0) {
-        drawMovingAverageGlow(futureData, midX, canvas.width, currentTime, currentTime + futureWindow, true, levelHeight);
+    // Draw moving average with glow effect first (underneath) - only if enabled
+    if (showAverageCheckbox.checked) {
+        if (pastData.length > 0) {
+            drawMovingAverageGlow(pastData, 0, midX, currentTime - pastWindow, currentTime, false, levelHeight);
+        }
+        if (futureData.length > 0) {
+            drawMovingAverageGlow(futureData, midX, canvas.width, currentTime, currentTime + futureWindow, true, levelHeight);
+        }
     }
 
     // Draw main dynamics lines on top (sharp)
@@ -524,19 +524,25 @@ function drawLegacyVisualization(levelHeight) {
 }
 
 // Playback controls
-playBtn.addEventListener('click', () => {
-    if (audioContext.state === 'suspended') {
-        audioContext.resume();
+playPauseBtn.addEventListener('click', () => {
+    if (isPlaying) {
+        // Pause
+        audioElement.pause();
+        isPlaying = false;
+        cancelAnimationFrame(animationId);
+        playPauseBtn.textContent = '▶ Play';
+        playPauseBtn.style.background = '#4CAF50'; // Green for play
+    } else {
+        // Play
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
+        audioElement.play();
+        isPlaying = true;
+        visualize();
+        playPauseBtn.textContent = '⏸ Pause';
+        playPauseBtn.style.background = '#FF9800'; // Yellow/Orange for pause
     }
-    audioElement.play();
-    isPlaying = true;
-    visualize();
-});
-
-pauseBtn.addEventListener('click', () => {
-    audioElement.pause();
-    isPlaying = false;
-    cancelAnimationFrame(animationId);
 });
 
 stopBtn.addEventListener('click', () => {
@@ -548,13 +554,30 @@ stopBtn.addEventListener('click', () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     currentLevelDisplay.textContent = 'Level: -';
     currentLevelDisplay.style.backgroundColor = '#f0f0f0';
+    playPauseBtn.textContent = '▶ Play';
+    playPauseBtn.style.background = '#4CAF50'; // Green for play
 });
 
-// Speed control
-speedControl.addEventListener('input', (e) => {
-    const speed = parseFloat(e.target.value);
-    audioElement.playbackRate = speed;
-    speedValue.textContent = `${speed.toFixed(2)}x`;
+// Speed control with 5 levels
+const speedLevels = [0.5, 0.75, 1.0, 1.25, 1.5];
+let currentSpeedIndex = 2; // Start at 1.0x
+
+speedDownBtn.addEventListener('click', () => {
+    if (currentSpeedIndex > 0) {
+        currentSpeedIndex--;
+        const speed = speedLevels[currentSpeedIndex];
+        audioElement.playbackRate = speed;
+        speedDisplay.textContent = `${speed.toFixed(2)}x`;
+    }
+});
+
+speedUpBtn.addEventListener('click', () => {
+    if (currentSpeedIndex < speedLevels.length - 1) {
+        currentSpeedIndex++;
+        const speed = speedLevels[currentSpeedIndex];
+        audioElement.playbackRate = speed;
+        speedDisplay.textContent = `${speed.toFixed(2)}x`;
+    }
 });
 
 // Levels input
