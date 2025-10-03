@@ -67,6 +67,14 @@ h1 {
     font-size: 0.9em;
 }
 
+.analysis-status {
+    display: block;
+    margin-top: 10px;
+    color: #667eea;
+    font-weight: 600;
+    font-size: 0.9em;
+}
+
 .settings {
     display: flex;
     gap: 30px;

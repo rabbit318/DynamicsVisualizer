@@ -2,6 +2,7 @@
 const audioElement = document.getElementById('audio-element');
 const audioFileInput = document.getElementById('audio-file');
 const fileNameDisplay = document.getElementById('file-name');
+const analysisStatus = document.getElementById('analysis-status');
 const playBtn = document.getElementById('play-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const stopBtn = document.getElementById('stop-btn');
@@ -32,6 +33,9 @@ const maxHistoryPoints = 500;
 let numLevels = 5;
 let volumeMin = Infinity;
 let volumeMax = -Infinity;
+let isAnalyzed = false;
+let currentAudioBuffer = null;
+let preAnalyzedData = []; // Store all dynamics data from pre-analysis
 
 // Cute color palette
 const cuteColors = [
@@ -47,20 +51,115 @@ function resizeCanvas() {
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
+// Pre-analyze audio file
+async function preAnalyzeAudio(file) {
+    analysisStatus.textContent = 'Analyzing audio...';
+    playBtn.disabled = true;
+    pauseBtn.disabled = true;
+    stopBtn.disabled = true;
+    isAnalyzed = false;
+    preAnalyzedData = [];
+
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const offlineContext = new OfflineAudioContext(2, 44100 * 600, 44100); // Max 10 minutes
+        const audioBuffer = await offlineContext.decodeAudioData(arrayBuffer);
+        currentAudioBuffer = audioBuffer;
+
+        // Create offline analyzer
+        const offlineAnalyser = offlineContext.createAnalyser();
+        offlineAnalyser.fftSize = 256;
+        const bufferLength = offlineAnalyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        // Create source and connect
+        const offlineSource = offlineContext.createBufferSource();
+        offlineSource.buffer = audioBuffer;
+        offlineSource.connect(offlineAnalyser);
+        offlineAnalyser.connect(offlineContext.destination);
+
+        // Calculate sample rate - sample every 16ms (approximately 60 fps)
+        const sampleInterval = 0.016;
+        const totalSamples = Math.floor(audioBuffer.duration / sampleInterval);
+        let tempMin = Infinity;
+        let tempMax = -Infinity;
+        let tempData = [];
+
+        // Create a script processor to analyze
+        const scriptProcessor = offlineContext.createScriptProcessor(2048, 2, 2);
+        let sampleCount = 0;
+        let lastSampleTime = 0;
+
+        scriptProcessor.onaudioprocess = () => {
+            const currentTime = offlineContext.currentTime;
+            if (currentTime - lastSampleTime >= sampleInterval) {
+                offlineAnalyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    sum += dataArray[i];
+                }
+                const average = sum / dataArray.length;
+                if (average > 0) {
+                    tempMin = Math.min(tempMin, average);
+                    tempMax = Math.max(tempMax, average);
+                }
+                tempData.push({ time: currentTime, volume: average });
+                lastSampleTime = currentTime;
+                sampleCount++;
+
+                // Update progress
+                const progress = Math.floor((sampleCount / totalSamples) * 100);
+                analysisStatus.textContent = `Analyzing: ${progress}%`;
+            }
+        };
+
+        offlineAnalyser.connect(scriptProcessor);
+        scriptProcessor.connect(offlineContext.destination);
+        offlineSource.start(0);
+
+        await offlineContext.startRendering();
+
+        // Set the global min/max
+        volumeMin = tempMin;
+        volumeMax = tempMax;
+
+        // Calculate levels for all data points
+        preAnalyzedData = tempData.map(d => ({
+            time: d.time,
+            volume: d.volume,
+            level: volumeToLevel(d.volume)
+        }));
+
+        isAnalyzed = true;
+
+        analysisStatus.textContent = 'Analysis complete! Ready to play.';
+        playBtn.disabled = false;
+        pauseBtn.disabled = false;
+        stopBtn.disabled = false;
+
+    } catch (error) {
+        console.error('Error analyzing audio:', error);
+        analysisStatus.textContent = 'Analysis failed. Using real-time mode.';
+        volumeMin = Infinity;
+        volumeMax = -Infinity;
+        isAnalyzed = false;
+        preAnalyzedData = [];
+        playBtn.disabled = false;
+        pauseBtn.disabled = false;
+        stopBtn.disabled = false;
+    }
+}
+
 // File upload handler
-audioFileInput.addEventListener('change', (e) => {
+audioFileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (file) {
         const url = URL.createObjectURL(file);
         audioElement.src = url;
         fileNameDisplay.textContent = file.name;
-        playBtn.disabled = false;
-        pauseBtn.disabled = false;
-        stopBtn.disabled = false;
         volumeHistory.length = 0;
-        volumeMin = Infinity;
-        volumeMax = -Infinity;
         initAudioContext();
+        await preAnalyzeAudio(file);
     }
 });
 
@@ -86,7 +185,8 @@ function getVolume() {
         sum += dataArray[i];
     }
     const average = sum / dataArray.length;
-    if (average > 0) {
+    // Only update min/max if we haven't pre-analyzed
+    if (!isAnalyzed && average > 0) {
         volumeMin = Math.min(volumeMin, average);
         volumeMax = Math.max(volumeMax, average);
     }
@@ -123,23 +223,47 @@ function updateLegend() {
 // Visualization loop
 function visualize() {
     if (!isPlaying) return;
-    const volume = getVolume();
-    const level = volumeToLevel(volume);
-    volumeHistory.push({ volume, level });
-    if (volumeHistory.length > maxHistoryPoints) {
-        volumeHistory.shift();
+
+    let level;
+
+    if (isAnalyzed && preAnalyzedData.length > 0) {
+        // Use pre-analyzed data synced to audio element time
+        const currentTime = audioElement.currentTime;
+
+        // Find the closest data point to current time
+        let closestIndex = 0;
+        let minDiff = Math.abs(preAnalyzedData[0].time - currentTime);
+
+        for (let i = 1; i < preAnalyzedData.length; i++) {
+            const diff = Math.abs(preAnalyzedData[i].time - currentTime);
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestIndex = i;
+            } else {
+                break; // Data is sorted, so we can stop once diff starts increasing
+            }
+        }
+
+        level = preAnalyzedData[closestIndex].level;
+    } else {
+        // Fallback to real-time analysis if not pre-analyzed
+        const volume = getVolume();
+        level = volumeToLevel(volume);
+        volumeHistory.push({ volume, level });
+        if (volumeHistory.length > maxHistoryPoints) {
+            volumeHistory.shift();
+        }
     }
+
     currentLevelDisplay.textContent = `Level: ${level}`;
     currentLevelDisplay.style.backgroundColor = getColorForLevel(level);
     drawVisualization();
     animationId = requestAnimationFrame(visualize);
 }
 
-// Draw the moving line visualization
+// Draw the moving line visualization with past/future split
 function drawVisualization() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (volumeHistory.length === 0) return;
-    const pointWidth = canvas.width / maxHistoryPoints;
     const levelHeight = canvas.height / numLevels;
 
     // Draw level background zones
@@ -148,7 +272,129 @@ function drawVisualization() {
         ctx.fillRect(0, canvas.height - (i + 1) * levelHeight, canvas.width, levelHeight);
     }
 
-    // Draw the volume line
+    if (!isAnalyzed || preAnalyzedData.length === 0) {
+        // Fallback to old visualization if not pre-analyzed
+        drawLegacyVisualization(levelHeight);
+        return;
+    }
+
+    const currentTime = audioElement.currentTime;
+    const duration = audioElement.duration;
+    const midX = canvas.width / 2;
+
+    // Calculate time window (show total of ~10 seconds: 5 past, 5 future)
+    const timeWindow = 10; // seconds
+    const pastWindow = timeWindow / 2;
+    const futureWindow = timeWindow / 2;
+
+    // Filter data for past (left half)
+    const pastData = preAnalyzedData.filter(d =>
+        d.time >= currentTime - pastWindow && d.time <= currentTime
+    );
+
+    // Filter data for future (right half)
+    const futureData = preAnalyzedData.filter(d =>
+        d.time > currentTime && d.time <= currentTime + futureWindow
+    );
+
+    // Draw past (left half - colored)
+    if (pastData.length > 0) {
+        drawSection(pastData, 0, midX, currentTime - pastWindow, currentTime, false, levelHeight);
+    }
+
+    // Draw future (right half - grayed)
+    if (futureData.length > 0) {
+        drawSection(futureData, midX, canvas.width, currentTime, currentTime + futureWindow, true, levelHeight);
+    }
+
+    // Draw center line to mark current position
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(midX, 0);
+    ctx.lineTo(midX, canvas.height);
+    ctx.stroke();
+    ctx.setLineDash([]);
+}
+
+// Draw a section of the visualization (past or future)
+function drawSection(data, startX, endX, startTime, endTime, isFuture, levelHeight) {
+    if (data.length === 0) return;
+
+    const sectionWidth = endX - startX;
+    const timeRange = endTime - startTime;
+
+    // Draw the line
+    ctx.beginPath();
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    for (let i = 0; i < data.length; i++) {
+        const normalizedTime = (data[i].time - startTime) / timeRange;
+        const x = startX + (normalizedTime * sectionWidth);
+        const level = data[i].level;
+        const y = canvas.height - (level * levelHeight) + (levelHeight / 2);
+
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    }
+
+    // Create gradient
+    const gradient = ctx.createLinearGradient(startX, 0, endX, 0);
+    for (let i = 0; i < data.length; i++) {
+        const level = data[i].level;
+        const color = getColorForLevel(level);
+        const position = Math.max(0, Math.min(1, i / data.length));
+        // Make future grayed out
+        const finalColor = isFuture ? adjustColorBrightness(color, 0.5) : color;
+        gradient.addColorStop(position, finalColor);
+    }
+    ctx.strokeStyle = gradient;
+    ctx.stroke();
+
+    // Fill area under line
+    const lastX = startX + ((data[data.length - 1].time - startTime) / timeRange) * sectionWidth;
+    ctx.lineTo(lastX, canvas.height);
+    ctx.lineTo(startX, canvas.height);
+    ctx.closePath();
+
+    const fillGradient = ctx.createLinearGradient(startX, 0, endX, 0);
+    for (let i = 0; i < data.length; i++) {
+        const level = data[i].level;
+        const color = getColorForLevel(level);
+        const position = Math.max(0, Math.min(1, i / data.length));
+        const finalColor = isFuture ? adjustColorBrightness(color, 0.5) : color;
+        fillGradient.addColorStop(position, finalColor + (isFuture ? '20' : '40'));
+    }
+    ctx.fillStyle = fillGradient;
+    ctx.fill();
+}
+
+// Helper to adjust color brightness for future preview
+function adjustColorBrightness(hex, factor) {
+    // Convert hex to RGB
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+
+    // Mix with white (lighten)
+    const nr = Math.round(r + (255 - r) * factor);
+    const ng = Math.round(g + (255 - g) * factor);
+    const nb = Math.round(b + (255 - b) * factor);
+
+    return `#${nr.toString(16).padStart(2, '0')}${ng.toString(16).padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`;
+}
+
+// Legacy visualization for non-analyzed mode
+function drawLegacyVisualization(levelHeight) {
+    if (volumeHistory.length === 0) return;
+    const pointWidth = canvas.width / maxHistoryPoints;
+
     ctx.beginPath();
     ctx.lineWidth = 3;
     ctx.lineJoin = 'round';
@@ -175,7 +421,6 @@ function drawVisualization() {
     ctx.strokeStyle = gradient;
     ctx.stroke();
 
-    // Fill area under line
     if (volumeHistory.length > 0) {
         ctx.lineTo((volumeHistory.length - 1) * pointWidth, canvas.height);
         ctx.lineTo(0, canvas.height);
